@@ -1,0 +1,59 @@
+import
+	../solver
+
+test
+	solver puzzle-solver = state-size: 1, capacity: 8
+	initial-state nat8[] = 0,
+	list-transitions (1,), incrementer-puzzle is
+		- 2,
+	find-solution solver, initial-state, incrementer-puzzle is
+		- 1,
+		- 2,
+		- 3,
+		- 4,
+
+-incrementer-puzzle record puzzle-definition case
+-is-solved bool(_ incrementer-puzzle, state nat8 array-view)
+	state.only! == 4
+-transitions void(_ incrementer-puzzle, state nat8 array-view, updater updater)
+	emit-transition updater, state, 0, state[0] + 1
+
+test
+	solver puzzle-solver = state-size: 4, capacity: 32
+	initial-state nat8[] = 0, 0, 0, 0
+	is-solvable solver, initial-state, lights-on-puzzle is 4
+	list-transitions (1, 0, 1, 0), lights-on-puzzle is
+		- 0, 1, 0, 0
+		- 0, 1, 1, 1
+		- 0, 0, 0, 1
+		- 1, 1, 0, 1
+	find-solution solver, initial-state, lights-on-puzzle is
+		- 1, 1, 1, 0
+		- 0, 0, 1, 1
+		- 1, 0, 0, 0
+		- 1, 1, 1, 1
+
+# 2x2 lights-on game
+-lights-on-puzzle record puzzle-definition case
+-is-solved bool(_ lights-on-puzzle, state nat8 array-view)
+	every state, it == 1
+-transitions void(_ lights-on-puzzle, state nat8 array-view, updater updater)
+	# Each light can be toggled, and all lights but the opposite are toggled too
+	for i in 0::nat8 .. 4
+		emit-transition updater, state, of update
+			for j in 0::nat8 .. 4
+				unless j == opposite-light i
+					update[j] := toggle-light state[j]
+# This is a 2x2 puzzle, so only the opposite light won't also be toggled
+-opposite-light nat8(a nat8)
+	match a
+	as 0 then 3
+	as 1 then 2
+	as 2 then 1
+	as 3 then 0
+	else then throw unreachable
+-toggle-light nat8(a nat8)
+	match a
+	as 0 then 1
+	as 1 then 0
+	else then throw todo

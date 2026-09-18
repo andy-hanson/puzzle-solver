@@ -1,0 +1,14 @@
+import
+	../private/polynomial-hash
+
+test
+	bytes nat8[] = 151, 55, 100
+	full-polynomial-hash bytes is 0x54e9fd2c
+	verify-update bytes, 0, 251, 0x54e9fd90
+	verify-update bytes, 1, 66, 0x54ebab29
+	verify-update bytes, 2, 99, 0x4ef1f91b
+	verify-update bytes, 2, 100, 0x54e9fd2c # no change
+
+-verify-update void(bytes nat8[], index nat32, new-value nat8, new-hash nat32)
+	full-polynomial-hash update-at bytes, index, new-value is new-hash
+	update-polynomial-hash bytes.full-polynomial-hash, index, bytes[index], new-value is new-hash

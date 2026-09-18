@@ -1,0 +1,85 @@
+| Logically acts like a queue of t[] (all of {chunk-size}), but without separate allocations.
+| For performance, this does not null out unused values, so use only with types that do not hold on to memory.
+mut-chunked-queue[t] record mut
+	chunk-size nat32
+	-buffer mut t buffer
+	| If left == right, the queue is empty.
+	| This means we have no way to represent a completely full buffer, so it always has at least one empty spot.
+	-left mut nat32
+	-right mut nat32
+
+new[t] t mut-chunked-queue(chunk-size nat32)
+	chunk-size: chunk-size
+	buffer: trusted uninitialized-buffer chunk-size * 4
+	left: 0
+	right: 0
+
+any[t] bool(a t mut-chunked-queue)
+	a.left != a.right
+
+| Logically clears the queue. Does not free any memory or even null out values.
+clear[t] void(a t mut-chunked-queue)
+	a.left := 0
+	a.right := 0
+
+| Number of chunks, not number of individual elements.
+size[t] nat32(a t mut-chunked-queue)
+	a.size-elements / a.chunk-size
+
+size-elements[t] nat32(a t mut-chunked-queue)
+	match a.left <=> a.right
+	as less
+		a.right - a.left
+	as equal
+		0
+	as greater
+		a.buffer.size - a.left + a.right
+
+enqueue[t] void(a t mut-chunked-queue, values t array-view)
+	values.size is a.chunk-size
+	(trusted enqueue-uninitialized a)[0 .. end] := values
+
+| Enqueues a new buffer. The caller is responsible for initializing it.
+enqueue-uninitialized[t] t buffer-view(a t mut-chunked-queue) unsafe
+	if is-almost-full a
+		expand a
+	res = a.buffer[a.right .. a.right + a.chunk-size]
+	a.right +:= a.chunk-size
+	if a.right::nat == a.buffer.size
+		a.right := 0
+	res
+
+-is-almost-full[t] bool(a t mut-chunked-queue)
+	end-right = a.right + a.chunk-size
+	a.left == (if end-right == a.buffer.size then 0::nat else end-right)
+
+-expand[t] void(a t mut-chunked-queue)
+	size = size-elements a
+	nu t buffer = trusted uninitialized-buffer a.buffer.size * 2
+	if a.left < a.right
+		nu[0 .. size] := a.buffer[a.left .. a.right]
+	else
+		left-to-end-size = a.buffer.size - a.left
+		nu[0 .. left-to-end-size] := a.buffer[a.left .. end]
+		nu[left-to-end-size .. size] := a.buffer[0 .. a.right]
+	a.buffer := nu
+	a.left := 0
+	a.right := size
+
+dequeue[t] t[]?(a t mut-chunked-queue)
+	do if any a
+	res mut t[] = ()
+	trusted inspect-then-dequeue a, of x
+		res := x.to
+	res
+
+| Calls 'f' on the current chunk, then dequeues it at the end.
+| It's safe to call {enqueue} during {f}. This won't overwrite the inspected chunk.
+| It's unsafe to call {inspect-then-dequeue} more than once at a time.
+inspect-then-dequeue[t] void(a t mut-chunked-queue, f void mut(x t array-view)) unsafe
+	assert any a
+	res = a.buffer[a.left .. a.left + a.chunk-size]
+	f[cast-immutable res]
+	a.left +:= a.chunk-size
+	if a.left::nat == a.buffer.size
+		a.left := 0

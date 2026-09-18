@@ -1,0 +1,24 @@
+import
+	keen/bits
+
+full-polynomial-hash nat32(value nat8 array-view)
+	res mut nat32 = 0
+	for i in 0::nat32 .. value.size
+		res wrap-add:= wrap-mul i.base-power, value[i]::nat32
+	res
+
+update-polynomial-hash nat32(old-hash nat32, index nat32, old-value nat8, new-value nat8)
+	wrap-add old-hash, wrap-mul index.base-power, wrap-sub new-value::nat32, old-value::nat32
+
+-base nat32() = 0x2717
+-base-power nat32(n nat32)
+	do trusted
+	if n::nat >= base-powers-cache.size
+		cur mut nat32 = 1
+		bases nat32[] = for _ in 0::nat32 .. round-up-to-power-of-two n + 1
+			res = cur
+			cur wrap-mul:= base
+			res
+		base-powers-cache := bases
+	base-powers-cache[n]
+-base-powers-cache global(nat32[]) = ()

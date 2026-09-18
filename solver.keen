@@ -1,0 +1,176 @@
+import
+	keen/col/mut-cuckoo-filter
+	keen/format/binary
+	./private/mut-chunked-queue
+	./private/polynomial-hash
+
++puzzle-definition interface
+	transitions void(state nat8 array-view, updater updater)
+	is-solved bool(state nat8 array-view)
+
++updater record mut
+	-impl updater-impl
+-updater-impl union(solver-updater, transition-lister) mut
++puzzle-solver record mut
+	state-size nat32
+	-seen mut-cuckoo-filter
+	-frontier nat8 mut-chunked-queue
++new puzzle-solver(state-size nat32, capacity nat32)
+	state-size: state-size
+	seen: capacity: capacity
+	frontier: chunk-size: state-size + hash-size-bytes
+-clear void(a puzzle-solver)
+	clear a.seen
+	clear a.frontier
+
+| Returns the minimum number of steps to solve the puzzle.
++is-solvable nat32?(solver puzzle-solver, initial-state nat8[], fn puzzle-definition)
+	?a common solver, initial-state, fn, ()
+
+-prev-states alias
+	nat8[] mut[nat8[]]
+
+| This is slower than {is-solvable}.
+| Result includes all states including the solved state, but does not include the initial state.
+| So, the result's size is the same as the result of {is-solvable}.
++find-solution nat8[][]?(solver puzzle-solver, initial-state nat8[], fn puzzle-definition)
+	prev-states prev-states = (initial-state, initial-state),
+	do if final-depth, final-state = common solver, initial-state, fn, prev-states
+	_ = remove! prev-states, initial-state
+	solution-from-prev-states prev-states, final-depth, final-state
+
+| Like {find-solution} but does not use a cuckoo filter, and so will not wrongly fail to find a solution
++find-solution-slow nat8[][]?(initial-state nat8[], fn puzzle-definition)
+	do unless is-solved fn, initial-state else ()::nat8[][]
+	prev-states prev-states = (initial-state, initial-state),
+	frontier nat8 mut-chunked-queue = chunk-size: initial-state.size
+	enqueue frontier, initial-state
+	depth mut nat = 0
+	solution mut nat8[]? = ()
+	until solution or not any frontier
+		depth +:= 1
+		level-size = frontier.size
+		for _ in 0 .. level-size
+			state = dequeue! frontier
+			updater transition-lister = state, ()
+			transitions fn, state, (updater,)
+			for next-state in updater.transitions
+				if is-solved fn, next-state
+					solution := next-state
+				_ = ensure prev-states, next-state, of
+					enqueue frontier, next-state
+					state
+	if solution then solution-from-prev-states prev-states, depth, solution!
+
+-solution-from-prev-states nat8[][](prev-states prev-states, final-depth nat, final-state nat8[])
+	to reverse with::nat8[][] out in build final-depth
+		cur mut = final-state
+		while prev = prev-states[cur]
+			out ~= cur
+			cur := prev
+
+| For debugging: Takes a transition functions and lists all possible outputs
++list-transitions nat8[][](initial-state nat8[], fn puzzle-definition)
+	updater transition-lister = initial-state, ()
+	transitions fn, initial-state, (updater,)
+	move-to updater.transitions
+-transition-lister record mut
+	initial-state nat8[]
+	transitions nat8[] mut[]
+
+# Returns the final state and its depth
+-common (nat32, nat8[])?
+	solver puzzle-solver
+	initial-state nat8[]
+	fn puzzle-definition
+	prev-states prev-states?
+do
+	do unless is-solved fn, initial-state else 0, ()
+	finally clear solver
+	initial-state.size is solver.state-size
+	initial-hash = full-polynomial-hash initial-state
+	try-add solver.seen, initial-hash is added
+	enqueue solver.frontier, initial-state ~~ big-endian initial-hash
+	updater solver-updater =
+		seen: solver.seen
+		frontier: solver.frontier
+		cur-state-hash: ()
+		cur-depth: 0
+		fn: fn
+		final-state: ()
+		prev-states: prev-states
+		failed-to-add-count: 0
+	until updater.final-state or not any solver.frontier
+		updater.cur-depth +:= 1
+		level-size = solver.frontier.size # Number of states at this depth
+		i mut nat32 = 0
+		until updater.final-state or i == level-size
+			i +:= 1
+			trusted inspect-then-dequeue solver.frontier, of state-and-hash
+				updater.cur-state-hash := from-big-endian state-and-hash[end - hash-size-bytes .. end]
+				transitions fn, state-and-hash[0 .. end - hash-size-bytes], (updater,)
+	if updater.final-state
+		updater.cur-depth, updater.final-state!
+
+-hash-size-bytes nat32() = 4
+
++state-updates record mut
+	-impl state-updates-impl
+-state-updates-impl union(hash-only-updater, nat8 buffer-view) mut
+
++set-subscript void(a state-updates, index nat32, value nat8)
+	match impl = a.impl
+	as hash-only-updater
+		impl.hash := update-polynomial-hash impl.hash, index, impl.puzzle[index], value
+	as buffer-view
+		impl[index] := value
+
++emit-transition void(updater updater, state nat8 array-view, index nat32, value nat8)
+	emit-transition updater, state, of x
+		x[index] := value
++emit-transition void(updater updater, state nat8 array-view, index0 nat32, value0 nat8, index1 nat32, value1 nat8)
+	emit-transition updater, state, of x
+		x[index0] := value0
+		x[index1] := value1
++emit-transition void(updater updater, state nat8 array-view, f void data(a state-updates))
+	match impl = updater.impl
+	as solver-updater
+		new-hash =
+			hash-updater = hash-only-updater state, impl.cur-state-hash
+			f[hash-updater,]
+			hash-updater.hash
+		match try-add impl.seen, new-hash
+		as already-contained
+			()
+		as added
+			new-state-and-hash = trusted enqueue-uninitialized impl.frontier
+			new-state-and-hash[0 .. end - hash-size-bytes] := state
+			f[new-state-and-hash[0 .. end - hash-size-bytes],]
+			write-big-endian new-state-and-hash[end - hash-size-bytes .. end], new-hash
+			new-state = trusted cast-immutable new-state-and-hash[0 .. end - hash-size-bytes]
+			if is-solved impl.fn, new-state and not impl.final-state
+				impl.final-state := new-state.to
+			if prev-states = impl.prev-states
+				_ = ensure prev-states, new-state.to, {state.to}
+		as failed-to-add
+			impl.failed-to-add-count +:= 1
+			()
+
+	as transition-lister
+		buf nat8 buffer = state.to
+		f[buf,]
+		impl.transitions ~= trusted cast-immutable buf
+
+-solver-updater record mut
+	seen mut-cuckoo-filter
+	frontier nat8 mut-chunked-queue
+	cur-state-hash mut nat32
+	cur-depth mut nat32
+	fn puzzle-definition
+	final-state mut nat8[]?
+	prev-states prev-states?
+	failed-to-add-count mut nat32
+
+-hash-only-updater record mut
+	puzzle nat8 array-view
+	hash mut nat32
